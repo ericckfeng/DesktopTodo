@@ -33,10 +33,11 @@ WINDOW_HEIGHT = 550
 class DesktopTodo:
     def __init__(self, root):
         self.root = root
-        self.root.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}+20+80")
+        self.geometry_data = f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}+20+80"
         self.root.attributes("-alpha", WINDOW_ALPHA)
         self.root.attributes("-topmost", ALWAYS_ON_TOP)
-        self.root.resizable(False, False)
+        self.root.resizable(True, True)
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
         # 預設資料結構
         self.app_title = "桌面待辦清單"
@@ -52,11 +53,17 @@ class DesktopTodo:
         self.summary_time = tk.StringVar(value=DEFAULT_TIME)
         
         self.load_data()
+        self.root.geometry(self.geometry_data)
         self.root.title(self.app_title)
+
+        # 載入座右銘
+        self.mottos = self.load_motto()
+        self.current_motto = ""
 
         # 构建UI
         self.create_ui()
         self.refresh_todo()
+        self.show_random_motto()
         # 启动定时检测线程
         self.start_timer_thread()
 
@@ -71,6 +78,29 @@ class DesktopTodo:
         # 設定按鈕
         set_btn = ttk.Button(top_frame, text="⚙️", width=3, command=self.open_settings)
         set_btn.pack(side="right")
+
+        # 頂部座右銘區域
+        self.motto_frame = tk.Frame(self.root, bg="#f9f9f9", bd=1, relief="groove")
+        self.motto_frame.pack(fill="x", padx=10, pady=(2, 5))
+        
+        self.motto_label = tk.Label(
+            self.motto_frame, 
+            text="", 
+            font=(DEFAULT_FONT[0], 9, "italic"), 
+            fg="#666666", 
+            bg="#f9f9f9",
+            wraplength=WINDOW_WIDTH-40, 
+            cursor="hand2"
+        )
+        self.motto_label.pack(fill="x", padx=5, pady=4)
+        
+        # 綁定點擊事件與懸停效果
+        self.motto_label.bind("<Button-1>", lambda e: self.show_random_motto())
+        self.motto_label.bind("<Enter>", lambda e: [self.motto_label.config(fg="#0056b3"), self.show_temp_status("💡 點擊可隨機更換座右銘")])
+        self.motto_label.bind("<Leave>", lambda e: [self.motto_label.config(fg="#666666"), self.clear_status()])
+        
+        # 綁定全域視窗 Configure 以自適應折行
+        self.root.bind("<Configure>", self.on_window_configure)
 
         # 定时设置区域
         set_frame = tk.Frame(self.root)
@@ -88,8 +118,16 @@ class DesktopTodo:
         self.canvas = tk.Canvas(list_frame, width=WINDOW_WIDTH-30, height=300, highlightthickness=0)
         self.scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=self.canvas.yview)
         self.scroll_frame = tk.Frame(self.canvas)
+        
+        # 記錄 canvas window 的 ID
+        self.canvas_window = self.canvas.create_window((0, 0), window=self.scroll_frame, anchor="nw")
+        
+        # 當 scroll_frame 大小改變時，更新 canvas 捲動區域
         self.scroll_frame.bind("<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
-        self.canvas.create_window((0, 0), window=self.scroll_frame, anchor="nw")
+        
+        # 當 Canvas 寬度改變時，動態更新 scroll_frame 寬度以實現水平自適應
+        self.canvas.bind("<Configure>", lambda event: self.canvas.itemconfig(self.canvas_window, width=event.width))
+        
         self.canvas.configure(yscrollcommand=self.scrollbar.set)
         
         self.canvas.pack(side="left", fill="both", expand=True)
@@ -126,6 +164,10 @@ class DesktopTodo:
         btn_frame = tk.Frame(self.root)
         btn_frame.pack(fill="x", padx=10, pady=3)
         ttk.Button(btn_frame, text="執行手動總結", command=self.do_summary).pack(side="left", expand=True, fill="x")
+
+        # 狀態列
+        self.status_label = tk.Label(self.root, text="", font=(DEFAULT_FONT[0], 9), fg="#888888", anchor="w")
+        self.status_label.pack(side="bottom", fill="x", padx=10, pady=(0, 2))
 
     def update_tag_combobox_values(self):
         values = [t["name"] for t in self.tags_config]
@@ -206,8 +248,11 @@ class DesktopTodo:
             if t_time:
                 disp_text = f"[{t_time}] {disp_text}"
                 
-            label = tk.Label(row_frame, text=disp_text, font=font_style, fg=fg_color)
-            label.pack(side="left")
+            label = tk.Label(row_frame, text=disp_text, font=font_style, fg=fg_color, anchor="w", justify="left")
+            label.pack(side="left", fill="x", expand=True)
+            
+            # 綁定右鍵選單與雙擊編輯
+            self.bind_context_menu(label, idx)
 
     def toggle_done(self, idx, var):
         is_done = var.get()
@@ -305,6 +350,10 @@ class DesktopTodo:
         self.refresh_todo()
 
     def save_data(self):
+        try:
+            self.geometry_data = self.root.geometry()
+        except Exception:
+            pass
         data = {
             "app_title": self.app_title,
             "telegram_token": str(self.telegram_token),
@@ -312,7 +361,8 @@ class DesktopTodo:
             "tags_config": self.tags_config,
             "todo_list": self.todo_list,
             "auto_summary_enable": self.auto_summary_enable.get(),
-            "summary_time": self.summary_time.get()
+            "summary_time": self.summary_time.get(),
+            "geometry": self.geometry_data
         }
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
@@ -330,6 +380,7 @@ class DesktopTodo:
                     self.todo_list = data.get("todo_list", [])
                     self.auto_summary_enable.set(data.get("auto_summary_enable", True))
                     self.summary_time.set(data.get("summary_time", DEFAULT_TIME))
+                    self.geometry_data = data.get("geometry", f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}+20+80")
                 except json.JSONDecodeError:
                     pass
 
@@ -516,6 +567,140 @@ class DesktopTodo:
                     self.root.after(0, self.do_summary)
         t = threading.Thread(target=timer_loop, daemon=True)
         t.start()
+
+    def bind_context_menu(self, widget, idx):
+        widget.bind("<Button-3>", lambda event, i=idx: self.show_context_menu(event, i))
+        widget.bind("<Button-2>", lambda event, i=idx: self.show_context_menu(event, i))
+        widget.bind("<Double-Button-1>", lambda event, i=idx: self.edit_todo_item(i))
+
+    def show_context_menu(self, event, idx):
+        menu = tk.Menu(self.root, tearoff=0)
+        menu.add_command(label="📋 複製內容", command=lambda i=idx: self.copy_todo_item(i))
+        menu.add_command(label="✏️ 編輯內容", command=lambda i=idx: self.edit_todo_item(i))
+        menu.add_separator()
+        menu.add_command(label="❌ 刪除事項", command=lambda i=idx: self.delete_todo_item(i))
+        menu.post(event.x_root, event.y_root)
+
+    def copy_todo_item(self, idx):
+        if 0 <= idx < len(self.todo_list):
+            item = self.todo_list[idx]
+            text_to_copy = item["text"]
+            t_prefix = item.get("prefix", "")
+            t_time = item.get("target_time", "")
+            full_text = text_to_copy
+            if t_prefix:
+                full_text = f"[{t_prefix}] {full_text}"
+            if t_time:
+                full_text = f"[{t_time}] {full_text}"
+                
+            self.root.clipboard_clear()
+            self.root.clipboard_append(full_text)
+            self.root.update()
+            self.show_temp_status(f"📋 已複製：{full_text}")
+
+    def edit_todo_item(self, idx):
+        if 0 <= idx < len(self.todo_list):
+            item = self.todo_list[idx]
+            new_text = simpledialog.askstring("修改待辦事項", "請輸入新的待辦內容：", initialvalue=item["text"], parent=self.root)
+            if new_text is not None:
+                new_text = new_text.strip()
+                if new_text:
+                    item["text"] = new_text
+                    self.save_data()
+                    self.refresh_todo()
+                    self.show_temp_status("✏️ 已修改待辦事項")
+
+    def delete_todo_item(self, idx):
+        if 0 <= idx < len(self.todo_list):
+            item = self.todo_list[idx]
+            if messagebox.askyesno("確認刪除", f"確定要刪除此待辦事項嗎？\n\n「{item['text']}」", parent=self.root):
+                self.todo_list.pop(idx)
+                self.save_data()
+                self.refresh_todo()
+                self.show_temp_status("❌ 已刪除待辦事項")
+
+    def load_motto(self):
+        motto_file = os.path.join(DATA_DIR, "motto.md")
+        default_mottos = [
+            "每一天都是新的開始，專注於當下。",
+            "萬事起頭難，堅持就是勝利。",
+            "卓越不是一個單一的行為，而是一個習慣。",
+            "簡單就是美，少即是多。",
+            "不怕慢，只怕站。持續前進就是力量。",
+            "相信自己，你比想像中更強大。"
+        ]
+        
+        if not os.path.exists(motto_file):
+            try:
+                with open(motto_file, "w", encoding="utf-8") as f:
+                    f.write("# 💡 座右銘與金句清單\n\n")
+                    f.write("<!-- 這裡可以放你喜歡的座右銘、名言或金句，程式會隨機選取顯示在視窗頂部。 -->\n")
+                    f.write("<!-- 格式支援 Markdown 項目符號（- 或 *）或直接換行。 -->\n\n")
+                    for m in default_mottos:
+                        f.write(f"- {m}\n")
+            except Exception as e:
+                print(f"無法建立 motto.md: {e}")
+                
+        mottos = []
+        if os.path.exists(motto_file):
+            try:
+                with open(motto_file, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line_str = line.strip()
+                        if not line_str or line_str.startswith("#") or line_str.startswith("<!--"):
+                            continue
+                        if line_str.startswith("- ") or line_str.startswith("* "):
+                            line_str = line_str[2:].strip()
+                        elif line_str.startswith("-") or line_str.startswith("*"):
+                            line_str = line_str[1:].strip()
+                        elif len(line_str) > 0:
+                            import re
+                            line_str = re.sub(r'^\d+\.\s*', '', line_str).strip()
+                        
+                        if line_str:
+                            mottos.append(line_str)
+            except Exception as e:
+                print(f"無法讀取 motto.md: {e}")
+                
+        if not mottos:
+            mottos = default_mottos
+        return mottos
+
+    def show_random_motto(self):
+        if not hasattr(self, "mottos") or not self.mottos:
+            self.mottos = self.load_motto()
+        
+        if self.mottos:
+            import random
+            new_motto = random.choice(self.mottos)
+            if len(self.mottos) > 1:
+                while new_motto == self.current_motto:
+                    new_motto = random.choice(self.mottos)
+            self.current_motto = new_motto
+            if hasattr(self, "motto_label"):
+                self.motto_label.config(text=f"💡 {self.current_motto}")
+
+    def on_window_configure(self, event):
+        if event.widget == self.root:
+            new_wrap = event.width - 40
+            if new_wrap > 50:
+                self.motto_label.config(wraplength=new_wrap)
+
+    def on_close(self):
+        self.save_data()
+        self.root.destroy()
+
+    def show_temp_status(self, text, delay=3000):
+        self.status_label.config(text=text)
+        if hasattr(self, "_status_timer") and self._status_timer:
+            self.root.after_cancel(self._status_timer)
+        self._status_timer = self.root.after(delay, self.clear_status)
+
+    def clear_status(self):
+        if hasattr(self, "_status_timer") and self._status_timer:
+            self.root.after_cancel(self._status_timer)
+            self._status_timer = None
+        self.status_label.config(text="")
 
 if __name__ == "__main__":
     root = tk.Tk()

@@ -1,8 +1,9 @@
 <h1 align="center">📋 DesktopTodo</h1>
 
 <p align="center">
-  <strong>一款輕巧、跨平台的桌面待辦清單工具</strong><br>
-  支援自訂標籤分類 · Telegram 推播通知 · 年度歷史歸檔
+  <strong>關於：</strong>一款輕量桌面待辦工具。支援本地儲存，並可將指定項目透過 Telegram Bot 推送至 Obsidian 接收。每日自動或手動結案，保持桌面乾淨清爽。<br><br>
+  <strong>About:</strong> A lightweight desktop TODO widget. Supports local storage and dispatches specific items to Telegram Bot for Obsidian integration. Clears tasks daily or manually to keep your desktop clean. <br>
+  <em>(Note: The UI currently only supports Traditional Chinese.)</em>
 </p>
 
 <p align="center">
